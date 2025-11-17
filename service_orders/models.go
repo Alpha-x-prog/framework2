@@ -139,10 +139,11 @@ func canTransitionStatus(from, to OrderStatus) bool {
 	}
 }
 
-// обновить статус заказа в БД
+// обновление статуса в БД (и в объекте)
 func updateOrderStatus(o *Order, newStatus OrderStatus) error {
 	if !canTransitionStatus(o.Status, newStatus) {
-		return sql.ErrNoRows // условно, чтобы наверху отдать свою ошибку
+		// используем ErrNoRows как маркер "нельзя перейти"
+		return sql.ErrNoRows
 	}
 
 	now := time.Now()
@@ -153,5 +154,11 @@ func updateOrderStatus(o *Order, newStatus OrderStatus) error {
 		`UPDATE orders SET status = ?, updated_at = ? WHERE id = ?`,
 		string(o.Status), o.UpdatedAt, o.ID,
 	)
+	return err
+}
+
+// удаление заказа
+func deleteOrder(o *Order) error {
+	_, err := db.Exec(`DELETE FROM orders WHERE id = ?`, o.ID)
 	return err
 }

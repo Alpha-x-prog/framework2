@@ -86,9 +86,9 @@ func getUserByID(id string) (*User, error) {
 	return &u, nil
 }
 
-// число пользователей
-func getUsersCount() (int, error) {
-	row := db.QueryRow(`SELECT COUNT(*) FROM users`)
+// число админов
+func getAdminsCount() (int, error) {
+	row := db.QueryRow(`SELECT COUNT(*) FROM users WHERE roles LIKE '%admin%'`)
 	var count int
 	if err := row.Scan(&count); err != nil {
 		return 0, err
@@ -96,15 +96,64 @@ func getUsersCount() (int, error) {
 	return count, nil
 }
 
-// список пользователей с пагинацией
-func listUsers(limit, offset int) ([]*User, error) {
-	rows, err := db.Query(
-		`SELECT id, email, name, password_hash, roles, created_at, updated_at
-		 FROM users
-		 ORDER BY created_at DESC
-		 LIMIT ? OFFSET ?`,
-		limit, offset,
+// обновление профиля (сейчас только name)
+func updateUserProfile(id string, name string) (*User, error) {
+	now := time.Now()
+
+	_, err := db.Exec(
+		`UPDATE users SET name = ?, updated_at = ? WHERE id = ?`,
+		name, now, id,
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	return getUserByID(id)
+}
+
+// список пользователей с фильтрами и пагинацией
+func getUsersCountFiltered(email, role string) (int, error) {
+	query := `SELECT COUNT(*) FROM users WHERE 1=1`
+	var args []any
+
+	if email != "" {
+		query += ` AND email LIKE ?`
+		args = append(args, "%"+email+"%")
+	}
+	if role != "" {
+		query += ` AND roles LIKE ?`
+		args = append(args, "%"+role+"%")
+	}
+
+	row := db.QueryRow(query, args...)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func listUsersFiltered(email, role string, limit, offset int) ([]*User, error) {
+	query := `
+		SELECT id, email, name, password_hash, roles, created_at, updated_at
+		FROM users
+		WHERE 1=1
+	`
+	var args []any
+
+	if email != "" {
+		query += ` AND email LIKE ?`
+		args = append(args, "%"+email+"%")
+	}
+	if role != "" {
+		query += ` AND roles LIKE ?`
+		args = append(args, "%"+role+"%")
+	}
+
+	query += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +163,7 @@ func listUsers(limit, offset int) ([]*User, error) {
 	for rows.Next() {
 		var u User
 		var rolesStr string
+
 		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &rolesStr, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -123,14 +173,6 @@ func listUsers(limit, offset int) ([]*User, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return users, nil
-}
 
-func getAdminsCount() (int, error) {
-	row := db.QueryRow(`SELECT COUNT(*) FROM users WHERE roles LIKE '%admin%'`)
-	var count int
-	if err := row.Scan(&count); err != nil {
-		return 0, err
-	}
-	return count, nil
+	return users, nil
 }

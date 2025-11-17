@@ -55,12 +55,11 @@ func handleCreateOrder(c *gin.Context) {
 		return
 	}
 
-	userIDVal, ok := c.Get("userId")
+	userID, ok := getUserID(c)
 	if !ok {
 		fail(c, http.StatusInternalServerError, "CONTEXT_ERROR", "User ID missing in context")
 		return
 	}
-	userID, _ := userIDVal.(string)
 
 	items := make([]OrderItem, 0, len(req.Items))
 	for _, it := range req.Items {
@@ -87,8 +86,8 @@ func handleCreateOrder(c *gin.Context) {
 		return
 	}
 
-	// простое доменное событие через лог — позже можно подключить брокер
-	// log.Printf("event=order.created orderId=%s userId=%s", order.ID, userID)
+	// доменное событие "создан заказ"
+	publishOrderCreated(order, getRequestID(c))
 
 	success(c, order)
 }
@@ -107,15 +106,15 @@ func handleGetOrder(c *gin.Context) {
 		return
 	}
 
-	userIDVal, ok := c.Get("userId")
+	userID, ok := getUserID(c)
 	if !ok {
 		fail(c, http.StatusInternalServerError, "CONTEXT_ERROR", "User ID missing in context")
 		return
 	}
-	userID, _ := userIDVal.(string)
 
-	// правило: владелец или админ
-	if order.UserID != userID && !hasAdminRole(c) {
+	// правило: владелец или админ/менеджер/директор/заказчик?
+	// по ТЗ достаточно "владелец или админ", но можно дать доступ и менеджеру/директору/заказчику для просмотра
+	if order.UserID != userID && !hasAdminRole(c) && !isManager(c) && !isDirector(c) && !isCustomer(c) {
 		fail(c, http.StatusForbidden, "FORBIDDEN", "You are not allowed to view this order")
 		return
 	}
@@ -125,12 +124,11 @@ func handleGetOrder(c *gin.Context) {
 
 // GET /v1/orders
 func handleListMyOrders(c *gin.Context) {
-	userIDVal, ok := c.Get("userId")
+	userID, ok := getUserID(c)
 	if !ok {
 		fail(c, http.StatusInternalServerError, "CONTEXT_ERROR", "User ID missing in context")
 		return
 	}
-	userID, _ := userIDVal.(string)
 
 	pageStr := c.DefaultQuery("page", "1")
 	limitStr := c.DefaultQuery("limit", "10")
@@ -207,26 +205,25 @@ func handleUpdateOrderStatus(c *gin.Context) {
 		return
 	}
 
-	// проверка прав:
-	// - инженер может менять ТОЛЬКО свои заказы
-	// - менеджер и admin могут менять любые
-	// - директор и заказчик не могут менять
+	// права:
+	// - admin / manager: могут менять любой заказ
+	// - engineer: только свои
+	// - director/customer: не могут менять
 	if hasAdminRole(c) || isManager(c) {
-		// ok, любые заказы
+		// ок
 	} else if isEngineer(c) {
 		if order.UserID != userID {
-			// на оценку 5: обновление чужого заказа — отказ
 			fail(c, http.StatusForbidden, "FORBIDDEN", "Engineer can update only own orders")
 			return
 		}
 	} else {
-		// director / customer
 		fail(c, http.StatusForbidden, "FORBIDDEN", "You are not allowed to update orders")
 		return
 	}
 
+	oldStatus := order.Status
+
 	if err := updateOrderStatus(order, newStatus); err != nil {
-		// если нельзя перейти в этот статус
 		if err == sql.ErrNoRows {
 			fail(c, http.StatusBadRequest, "INVALID_TRANSITION", "Status transition is not allowed")
 			return
@@ -235,7 +232,7 @@ func handleUpdateOrderStatus(c *gin.Context) {
 		return
 	}
 
-	// log.Printf("event=order.status_updated orderId=%s status=%s", order.ID, order.Status)
+	publishOrderStatusUpdated(order, oldStatus, newStatus, getRequestID(c))
 
 	success(c, order)
 }
@@ -260,16 +257,13 @@ func handleCancelOrder(c *gin.Context) {
 		return
 	}
 
-	// Правила:
-	// - владелец может отменить свой заказ
-	// - admin / manager могут отменить любой
-	if hasAdminRole(c) || isManager(c) || order.UserID == userID {
-		// ок
-	} else {
-		// на оценку 5: чужой — отказ
+	// владелец, менеджер или админ могут отменять
+	if !(order.UserID == userID || hasAdminRole(c) || isManager(c)) {
 		fail(c, http.StatusForbidden, "FORBIDDEN", "You are not allowed to cancel this order")
 		return
 	}
+
+	oldStatus := order.Status
 
 	if err := updateOrderStatus(order, StatusCancelled); err != nil {
 		if err == sql.ErrNoRows {
@@ -280,8 +274,55 @@ func handleCancelOrder(c *gin.Context) {
 		return
 	}
 
-	// лог доменного события "order.cancelled"
-	// log.Printf("event=order.cancelled orderId=%s userId=%s", order.ID, userID)
+	publishOrderStatusUpdated(order, oldStatus, StatusCancelled, getRequestID(c))
 
 	success(c, order)
+}
+
+// DELETE /v1/orders/:id
+func handleDeleteOrder(c *gin.Context) {
+	orderID := c.Param("id")
+
+	order, err := getOrderByID(orderID)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "DB_ERROR", "Failed to get order")
+		return
+	}
+	if order == nil {
+		fail(c, http.StatusNotFound, "ORDER_NOT_FOUND", "Order not found")
+		return
+	}
+
+	userID, ok := getUserID(c)
+	if !ok {
+		fail(c, http.StatusInternalServerError, "CONTEXT_ERROR", "User ID missing in context")
+		return
+	}
+
+	// правило удаления:
+	// - владелец может удалять только свои заказы в статусе created или cancelled
+	// - admin/manager могут удалять любой заказ
+	if hasAdminRole(c) || isManager(c) {
+		// ok
+	} else {
+		if order.UserID != userID {
+			fail(c, http.StatusForbidden, "FORBIDDEN", "You are not allowed to delete this order")
+			return
+		}
+		if order.Status != StatusCreated && order.Status != StatusCancelled {
+			fail(c, http.StatusBadRequest, "INVALID_STATE",
+				"Only orders in status 'created' or 'cancelled' can be deleted by owner")
+			return
+		}
+	}
+
+	if err := deleteOrder(order); err != nil {
+		fail(c, http.StatusInternalServerError, "DB_ERROR", "Failed to delete order")
+		return
+	}
+
+	success(c, gin.H{
+		"id":      order.ID,
+		"deleted": true,
+	})
 }

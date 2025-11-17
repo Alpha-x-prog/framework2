@@ -69,22 +69,6 @@ func AuthRequired() gin.HandlerFunc {
 	}
 }
 
-// маленький helper чтобы проверить admin в будущем, когда будем менять статус/чужие заказы
-func hasAdminRole(c *gin.Context) bool {
-	rolesVal, ok := c.Get("roles")
-	if !ok {
-		return false
-	}
-	roles, _ := rolesVal.([]string)
-	for _, r := range roles {
-		if r == "admin" {
-			return true
-		}
-	}
-	return false
-}
-
-// helper: получить userId из контекста
 func getUserID(c *gin.Context) (string, bool) {
 	userIDVal, ok := c.Get("userId")
 	if !ok {
@@ -94,7 +78,6 @@ func getUserID(c *gin.Context) (string, bool) {
 	return userID, ok
 }
 
-// helper: получить список ролей из контекста
 func getRoles(c *gin.Context) []string {
 	rolesVal, ok := c.Get("roles")
 	if !ok {
@@ -106,7 +89,15 @@ func getRoles(c *gin.Context) []string {
 	return nil
 }
 
-// новые хелперы
+func hasAdminRole(c *gin.Context) bool {
+	for _, r := range getRoles(c) {
+		if r == "admin" {
+			return true
+		}
+	}
+	return false
+}
+
 func hasRole(c *gin.Context, target string) bool {
 	for _, r := range getRoles(c) {
 		if r == target {

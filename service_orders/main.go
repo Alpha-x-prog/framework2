@@ -13,7 +13,13 @@ func main() {
 		log.Fatalf("failed to init orders database: %v", err)
 	}
 
-	router := gin.Default()
+	// не Default, чтобы контролировать middleware сами
+	router := gin.New()
+	router.Use(
+		gin.Recovery(),
+		RequestIDMiddleware(),
+		LoggingMiddleware(),
+	)
 
 	api := router.Group("/v1")
 	{
@@ -25,11 +31,10 @@ func main() {
 			orders.GET("/:id", handleGetOrder)
 			orders.GET("", handleListMyOrders)
 
-			// новые
 			orders.PATCH("/:id/status", handleUpdateOrderStatus)
 			orders.POST("/:id/cancel", handleCancelOrder)
+			orders.DELETE("/:id", handleDeleteOrder)
 		}
-
 	}
 
 	log.Println("service_orders listening on", defaultPort)
