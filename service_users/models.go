@@ -125,3 +125,12 @@ func listUsers(limit, offset int) ([]*User, error) {
 	}
 	return users, nil
 }
+
+func getAdminsCount() (int, error) {
+	row := db.QueryRow(`SELECT COUNT(*) FROM users WHERE roles LIKE '%admin%'`)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}

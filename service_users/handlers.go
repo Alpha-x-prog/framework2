@@ -12,6 +12,7 @@ type RegisterRequest struct {
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required,min=6"`
 	Name     string `json:"name" binding:"required"`
+	Role     string `json:"role" binding:"required"` // engineer / manager / director / customer
 }
 
 type LoginRequest struct {
@@ -20,10 +21,19 @@ type LoginRequest struct {
 }
 
 // POST /v1/users/register
+// POST /v1/users/register
 func handleRegister(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+
+	// проверим, что роль валидная
+	baseRole, ok := normalizeRole(req.Role)
+	if !ok {
+		fail(c, http.StatusBadRequest, "INVALID_ROLE",
+			"Role must be one of: engineer, manager, director, customer")
 		return
 	}
 
@@ -43,16 +53,17 @@ func handleRegister(c *gin.Context) {
 		return
 	}
 
-	// простая логика ролей:
-	// если это самый первый юзер в системе — делаем его admin
-	count, err := getUsersCount()
+	// считаем админов
+	adminCount, err := getAdminsCount()
 	if err != nil {
-		fail(c, http.StatusInternalServerError, "DB_ERROR", "Failed to count users")
+		fail(c, http.StatusInternalServerError, "DB_ERROR", "Failed to count admins")
 		return
 	}
-	roles := []string{"user"}
-	if count == 0 {
-		roles = []string{"admin"}
+
+	roles := []string{baseRole}
+	if adminCount == 0 {
+		// первый админ в системе — добавляем техническую роль admin
+		roles = append(roles, "admin")
 	}
 
 	user := &User{
@@ -192,4 +203,13 @@ func handleGetUsers(c *gin.Context) {
 		"limit": limit,
 		"total": total,
 	})
+}
+
+func normalizeRole(role string) (string, bool) {
+	switch role {
+	case "engineer", "manager", "director", "customer", "admin":
+		return role, true
+	default:
+		return "", false
+	}
 }
