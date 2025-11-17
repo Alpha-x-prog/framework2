@@ -7,6 +7,8 @@ import (
 )
 
 func main() {
+	initConfig()
+
 	if err := initDB(); err != nil {
 		log.Fatalf("failed to init database: %v", err)
 	}
@@ -19,7 +21,13 @@ func main() {
 		{
 			users.POST("/register", handleRegister)
 			users.POST("/login", handleLogin)
+
+			// защищённые маршруты
 			users.GET("/me", AuthRequired(), handleMe)
+
+			// только админ: список всех пользователей
+			users.GET("", AuthRequired(), AdminRequired(), handleGetUsers)
+			// маршрут /v1/users (без суффиксов)
 		}
 	}
 

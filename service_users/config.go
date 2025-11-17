@@ -1,11 +1,35 @@
 package main
 
-import "time"
+import (
+	"log"
+	"os"
+	"time"
 
-const (
-	defaultPort     = ":8081"                  // порт сервиса пользователей
-	jwtSecretString = "super-secret-change-me" // в реале брать из ENV
-	dbPath          = "users.db"               // путь к SQLite файлу
+	"github.com/joho/godotenv"
 )
 
-var tokenTTL = 24 * time.Hour
+const (
+	defaultPort = ":8081"
+	dbPath      = "users.db"
+)
+
+var (
+	jwtSecretString string
+	tokenTTL        = 24 * time.Hour
+)
+
+// загружаем .env и инициализируем глобальные конфиги
+func initConfig() {
+	_ = godotenv.Load()
+
+	jwtSecretString = getenv("JWT_SECRET", "dev-secret-change-me")
+
+	log.Println("Config initialized, JWT_SECRET length:", len(jwtSecretString))
+}
+
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}

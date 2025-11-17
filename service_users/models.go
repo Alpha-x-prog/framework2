@@ -85,3 +85,43 @@ func getUserByID(id string) (*User, error) {
 	u.Roles = rolesFromString(rolesStr)
 	return &u, nil
 }
+
+// число пользователей
+func getUsersCount() (int, error) {
+	row := db.QueryRow(`SELECT COUNT(*) FROM users`)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// список пользователей с пагинацией
+func listUsers(limit, offset int) ([]*User, error) {
+	rows, err := db.Query(
+		`SELECT id, email, name, password_hash, roles, created_at, updated_at
+		 FROM users
+		 ORDER BY created_at DESC
+		 LIMIT ? OFFSET ?`,
+		limit, offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	users := make([]*User, 0)
+	for rows.Next() {
+		var u User
+		var rolesStr string
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &rolesStr, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, err
+		}
+		u.Roles = rolesFromString(rolesStr)
+		users = append(users, &u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return users, nil
+}

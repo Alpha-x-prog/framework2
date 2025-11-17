@@ -101,3 +101,31 @@ func AuthRequired() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// проверка, что у пользователя есть роль admin
+func AdminRequired() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		rolesVal, ok := c.Get("roles")
+		if !ok {
+			fail(c, http.StatusForbidden, "FORBIDDEN", "Roles missing in context")
+			c.Abort()
+			return
+		}
+		roles, _ := rolesVal.([]string)
+
+		isAdmin := false
+		for _, r := range roles {
+			if r == "admin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			fail(c, http.StatusForbidden, "FORBIDDEN", "Admin role required")
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}

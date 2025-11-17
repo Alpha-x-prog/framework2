@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -42,12 +43,24 @@ func handleRegister(c *gin.Context) {
 		return
 	}
 
+	// простая логика ролей:
+	// если это самый первый юзер в системе — делаем его admin
+	count, err := getUsersCount()
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "DB_ERROR", "Failed to count users")
+		return
+	}
+	roles := []string{"user"}
+	if count == 0 {
+		roles = []string{"admin"}
+	}
+
 	user := &User{
 		ID:           uuid.NewString(),
 		Email:        req.Email,
 		Name:         req.Name,
 		PasswordHash: passwordHash,
-		Roles:        []string{"user"},
+		Roles:        roles,
 	}
 
 	if err := insertUser(user); err != nil {
@@ -127,5 +140,56 @@ func handleMe(c *gin.Context) {
 		"roles":     user.Roles,
 		"createdAt": user.CreatedAt,
 		"updatedAt": user.UpdatedAt,
+	})
+}
+
+// GET /v1/users (только admin)
+func handleGetUsers(c *gin.Context) {
+	pageStr := c.DefaultQuery("page", "1")
+	limitStr := c.DefaultQuery("limit", "10")
+
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	offset := (page - 1) * limit
+
+	total, err := getUsersCount()
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "DB_ERROR", "Failed to count users")
+		return
+	}
+
+	users, err := listUsers(limit, offset)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "DB_ERROR", "Failed to list users")
+		return
+	}
+
+	items := make([]gin.H, 0, len(users))
+	for _, u := range users {
+		items = append(items, gin.H{
+			"id":        u.ID,
+			"email":     u.Email,
+			"name":      u.Name,
+			"roles":     u.Roles,
+			"createdAt": u.CreatedAt,
+			"updatedAt": u.UpdatedAt,
+		})
+	}
+
+	success(c, gin.H{
+		"items": items,
+		"page":  page,
+		"limit": limit,
+		"total": total,
 	})
 }
