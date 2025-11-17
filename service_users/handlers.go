@@ -60,9 +60,12 @@ func handleRegister(c *gin.Context) {
 		return
 	}
 
+	// базовая роль, которую прислал клиент
 	roles := []string{baseRole}
-	if adminCount == 0 {
-		// первый админ в системе — добавляем техническую роль admin
+
+	// если в системе ещё нет админов И пользователь регистрируется НЕ как admin,
+	// добавляем ему техническую роль admin
+	if adminCount == 0 && baseRole != "admin" {
 		roles = append(roles, "admin")
 	}
 

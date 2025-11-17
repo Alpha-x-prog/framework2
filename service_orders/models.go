@@ -120,3 +120,38 @@ func listOrdersForUser(userID string, limit, offset int, sortDesc bool) ([]*Orde
 	}
 	return orders, nil
 }
+
+// проверить, допустим ли переход статуса
+func canTransitionStatus(from, to OrderStatus) bool {
+	if from == to {
+		return true
+	}
+	switch from {
+	case StatusCreated:
+		return to == StatusInProgress || to == StatusCancelled
+	case StatusInProgress:
+		return to == StatusDone || to == StatusCancelled
+	case StatusDone, StatusCancelled:
+		// финальные – дальше нельзя
+		return false
+	default:
+		return false
+	}
+}
+
+// обновить статус заказа в БД
+func updateOrderStatus(o *Order, newStatus OrderStatus) error {
+	if !canTransitionStatus(o.Status, newStatus) {
+		return sql.ErrNoRows // условно, чтобы наверху отдать свою ошибку
+	}
+
+	now := time.Now()
+	o.Status = newStatus
+	o.UpdatedAt = now
+
+	_, err := db.Exec(
+		`UPDATE orders SET status = ?, updated_at = ? WHERE id = ?`,
+		string(o.Status), o.UpdatedAt, o.ID,
+	)
+	return err
+}
