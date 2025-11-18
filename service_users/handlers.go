@@ -12,7 +12,7 @@ type RegisterRequest struct {
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required,min=6"`
 	Name     string `json:"name" binding:"required"`
-	Role     string `json:"role" binding:"required"` // engineer / manager / director / customer
+	Role     string `json:"role" binding:"required"` // engineer / manager / director / customer / admin
 }
 
 type LoginRequest struct {
@@ -20,7 +20,19 @@ type LoginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
-// POST /v1/users/register
+type UpdateProfileRequest struct {
+	Name string `json:"name" binding:"required"`
+}
+
+func normalizeRole(role string) (string, bool) {
+	switch role {
+	case "engineer", "manager", "director", "customer", "admin":
+		return role, true
+	default:
+		return "", false
+	}
+}
+
 // POST /v1/users/register
 func handleRegister(c *gin.Context) {
 	var req RegisterRequest
@@ -29,11 +41,10 @@ func handleRegister(c *gin.Context) {
 		return
 	}
 
-	// проверим, что роль валидная
 	baseRole, ok := normalizeRole(req.Role)
 	if !ok {
 		fail(c, http.StatusBadRequest, "INVALID_ROLE",
-			"Role must be one of: engineer, manager, director, customer")
+			"Role must be one of: engineer, manager, director, customer, admin")
 		return
 	}
 
@@ -60,11 +71,8 @@ func handleRegister(c *gin.Context) {
 		return
 	}
 
-	// базовая роль, которую прислал клиент
 	roles := []string{baseRole}
-
-	// если в системе ещё нет админов И пользователь регистрируется НЕ как admin,
-	// добавляем ему техническую роль admin
+	// если админов ещё нет и пользователь регистрируется НЕ как admin — добавляем admin
 	if adminCount == 0 && baseRole != "admin" {
 		roles = append(roles, "admin")
 	}
@@ -157,8 +165,47 @@ func handleMe(c *gin.Context) {
 	})
 }
 
-// GET /v1/users (только admin)
+// PATCH /v1/users/me
+func handleUpdateProfile(c *gin.Context) {
+	userIDVal, ok := c.Get("userId")
+	if !ok {
+		fail(c, http.StatusInternalServerError, "CONTEXT_ERROR", "User ID missing in context")
+		return
+	}
+	userID, _ := userIDVal.(string)
+
+	var req UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+
+	updated, err := updateUserProfile(userID, req.Name)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "DB_ERROR", "Failed to update profile")
+		return
+	}
+	if updated == nil {
+		fail(c, http.StatusNotFound, "USER_NOT_FOUND", "User not found")
+		return
+	}
+
+	success(c, gin.H{
+		"id":        updated.ID,
+		"email":     updated.Email,
+		"name":      updated.Name,
+		"roles":     updated.Roles,
+		"createdAt": updated.CreatedAt,
+		"updatedAt": updated.UpdatedAt,
+	})
+}
+
+// GET /v1/users (admin)
 func handleGetUsers(c *gin.Context) {
+	// фильтры
+	email := c.Query("email")
+	role := c.Query("role")
+
 	pageStr := c.DefaultQuery("page", "1")
 	limitStr := c.DefaultQuery("limit", "10")
 
@@ -173,16 +220,15 @@ func handleGetUsers(c *gin.Context) {
 	if limit > 100 {
 		limit = 100
 	}
-
 	offset := (page - 1) * limit
 
-	total, err := getUsersCount()
+	total, err := getUsersCountFiltered(email, role)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, "DB_ERROR", "Failed to count users")
 		return
 	}
 
-	users, err := listUsers(limit, offset)
+	users, err := listUsersFiltered(email, role, limit, offset)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, "DB_ERROR", "Failed to list users")
 		return
@@ -206,13 +252,4 @@ func handleGetUsers(c *gin.Context) {
 		"limit": limit,
 		"total": total,
 	})
-}
-
-func normalizeRole(role string) (string, bool) {
-	switch role {
-	case "engineer", "manager", "director", "customer", "admin":
-		return role, true
-	default:
-		return "", false
-	}
 }
